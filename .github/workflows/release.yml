@@ -38,27 +38,46 @@ jobs:
         run: |
           npm run changelog:release || echo "" > CHANGELOG.md
 
-      - name: Generate release body
-        id: release-body
+      - name: Generate release notes from commits
+        id: release-notes
         run: |
           CURRENT_TAG="${{ github.ref_name }}"
           PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "^${CURRENT_TAG}$" | head -1 || echo "")
           
-          BODY="## CHANGELOG\n\n"
-          BODY="${BODY}See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${CURRENT_TAG}/CHANGELOG.md) for detailed changes."
-          
-          if [ -n "$PREVIOUS_TAG" ]; then
-            BODY="## What's Changed\n\nFull changelog: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${CURRENT_TAG}\n\n${BODY}"
+          if [ -z "$PREVIOUS_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREVIOUS_TAG}..${CURRENT_TAG}"
           fi
           
-          echo "${BODY}" > RELEASE_BODY.md
-          echo "body_path=RELEASE_BODY.md" >> $GITHUB_OUTPUT
+          # Generate formatted release notes from commits
+          {
+            echo "## What's Changed"
+            echo ""
+            git log ${RANGE} --pretty=format:"- %s (%h)" --no-merges | \
+              sed 's/^feat: /🚀 **Feature:** /' | \
+              sed 's/^fix: /🐛 **Fix:** /' | \
+              sed 's/^docs: /📝 **Docs:** /' | \
+              sed 's/^chore: /🔧 **Chore:** /' | \
+              sed 's/^refactor: /♻️ **Refactor:** /' | \
+              sed 's/^test: /✅ **Test:** /' | \
+              sed 's/^perf: /⚡ **Performance:** /' | \
+              sed 's/^style: /💄 **Style:** /'
+            echo ""
+            if [ -n "$PREVIOUS_TAG" ]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${CURRENT_TAG}"
+            fi
+          } > RELEASE_NOTES.md
+          
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          cat RELEASE_NOTES.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
-          body_path: RELEASE_BODY.md
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false
 
       - name: Commit updated CHANGELOG.md
         env:
