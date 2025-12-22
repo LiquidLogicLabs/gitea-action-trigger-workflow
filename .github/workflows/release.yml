@@ -38,39 +38,27 @@ jobs:
         run: |
           npm run changelog:release || echo "" > CHANGELOG.md
 
-      - name: Generate changelog notes for release
-        id: changelog
+      - name: Generate release body
+        id: release-body
         run: |
-          set -euo pipefail
           CURRENT_TAG="${{ github.ref_name }}"
-          
-          # Get previous tag
           PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "^${CURRENT_TAG}$" | head -1 || echo "")
           
-          if [ -z "$PREVIOUS_TAG" ]; then
-            # First release - generate from beginning
-            npx conventional-changelog -p conventionalcommits --release-count 1 > RELEASE_NOTES.md || echo "" > RELEASE_NOTES.md
-          else
-            # Generate notes between previous tag and current tag
-            npx conventional-changelog -p conventionalcommits --from "$PREVIOUS_TAG" --to "$CURRENT_TAG" > RELEASE_NOTES.md || echo "" > RELEASE_NOTES.md
+          BODY="## CHANGELOG\n\n"
+          BODY="${BODY}See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${CURRENT_TAG}/CHANGELOG.md) for detailed changes."
+          
+          if [ -n "$PREVIOUS_TAG" ]; then
+            BODY="## What's Changed\n\nFull changelog: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${CURRENT_TAG}\n\n${BODY}"
           fi
           
-          # If still empty, fallback to git log
-          if [ ! -s RELEASE_NOTES.md ]; then
-            echo "## Changes" > RELEASE_NOTES.md
-            echo "" >> RELEASE_NOTES.md
-            git log ${PREVIOUS_TAG}..${CURRENT_TAG} --pretty=format:"- %s (%h)" >> RELEASE_NOTES.md || echo "No changes found" >> RELEASE_NOTES.md
-          fi
-          
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          cat RELEASE_NOTES.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "${BODY}" > RELEASE_BODY.md
+          echo "body_path=RELEASE_BODY.md" >> $GITHUB_OUTPUT
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          body_path: RELEASE_NOTES.md
-          generate_release_notes: false
+          generate_release_notes: true
+          body_path: RELEASE_BODY.md
 
       - name: Commit updated CHANGELOG.md
         env:
