@@ -1,6 +1,9 @@
 name: Trigger remote workflow (Gitea)
 description: Trigger a workflow in another Gitea repository (same or different instance).
 author: ravenwolf.org
+branding:
+  icon: 'play'
+  color: 'blue'
 
 inputs:
   repo:
