@@ -25,6 +25,10 @@ jobs:
           npm run build
           git diff --exit-code
 
+      - name: Generate changelog notes
+        run: |
+          npm run changelog:notes > RELEASE_NOTES.md || echo "" > RELEASE_NOTES.md
+
       - name: Create release (Gitea API)
         env:
           TOKEN: ${{ secrets.GITEA_TOKEN }}
@@ -46,11 +50,21 @@ jobs:
 
           API="${BASE%/}/api/v1/repos/${REPO}/releases"
 
+          # Read changelog notes and escape for JSON (simple escaping)
+          NOTES=""
+          if [ -f RELEASE_NOTES.md ]; then
+            # Escape quotes and newlines for JSON
+            NOTES=$(cat RELEASE_NOTES.md | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+            NOTES="\"${NOTES}\""
+          else
+            NOTES="null"
+          fi
+
           # Try to create release; if it already exists, Gitea typically returns 409.
           CODE=$(curl -sS -o /tmp/release.json -w "%{http_code}" \
             -H "Authorization: token ${TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"draft\":false,\"prerelease\":false}" \
+            -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"body\":${NOTES},\"draft\":false,\"prerelease\":false}" \
             "${API}")
 
           if [ "$CODE" = "201" ] || [ "$CODE" = "200" ] || [ "$CODE" = "409" ]; then
