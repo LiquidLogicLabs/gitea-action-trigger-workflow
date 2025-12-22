@@ -1,0 +1,50 @@
+name: ❓ Question
+description: Ask a question or get help
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question? We're here to help! Please provide as much detail as possible.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+      placeholder: How do I...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What are you trying to accomplish? Share your workflow YAML (remove sensitive info)
+      render: yaml
+      placeholder: |
+        - uses: LiquidLogicLabs/gitea-action-trigger-workflow@v1
+          with:
+            workflow_name: Deploy
+    validations:
+      required: false
+
+  - type: input
+    id: gitea-version
+    attributes:
+      label: Gitea Version
+      description: Version of Gitea you're using (if relevant)
+      placeholder: 1.23.0
+    validations:
+      required: false
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What Have You Tried?
+      description: What have you already tried to solve this?
+      placeholder: I've tried...
+    validations:
+      required: false
+
