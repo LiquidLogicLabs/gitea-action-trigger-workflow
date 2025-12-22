@@ -13,7 +13,12 @@ inputs:
       - https://gitea.example.com/owner/repo
     required: false
   workflow_name:
-    description: Workflow name (the `name:` in the workflow file) to dispatch.
+    description: >
+      Workflow name to dispatch. This is the top-level `name:` field in the workflow YAML file.
+      If the workflow has no `name:` field, the filename (without extension) is used as fallback.
+      NOT the job name or step name.
+      Example: if your workflow has `name: CI/CD Pipeline`, use `workflow_name: CI/CD Pipeline`.
+      Example: if your workflow file is `build.yml` with no name field, use `workflow_name: build`.
     required: true
   ref:
     description: Git ref to run the workflow on (branch/tag/SHA).

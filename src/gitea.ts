@@ -10,24 +10,41 @@ export type WorkflowLike = {
 
 function isWorkflowLike(x: unknown): x is WorkflowLike {
   if (!x || typeof x !== 'object') return false;
-  const name = (x as any).name;
-  return typeof name === 'string' && name.trim() !== '';
+  const obj = x as any;
+  // Workflow must have either a name or a path/file to identify it
+  const hasName = typeof obj.name === 'string' && obj.name.trim() !== '';
+  const hasPath = typeof obj.path === 'string' && obj.path.trim() !== '';
+  const hasFile = typeof obj.file === 'string' && obj.file.trim() !== '';
+  return hasName || hasPath || hasFile;
+}
+
+function normalizeWorkflow(w: WorkflowLike): WorkflowLike {
+  // If workflow has no name but has a path/file, use that as the name
+  if ((!w.name || w.name.trim() === '') && (w.path || w.file)) {
+    const fallback = w.path || w.file || '';
+    // Extract just the filename without path/extension for cleaner display
+    const filename = fallback.split('/').pop()?.replace(/\.ya?ml$/, '') || fallback;
+    return { ...w, name: filename };
+  }
+  return w;
 }
 
 function extractWorkflows(payload: unknown): WorkflowLike[] | null {
-  if (Array.isArray(payload)) {
-    const ws = payload.filter(isWorkflowLike) as WorkflowLike[];
+  const extract = (items: unknown[]): WorkflowLike[] => {
+    const ws = items.filter(isWorkflowLike).map(normalizeWorkflow) as WorkflowLike[];
     return ws.length > 0 ? ws : [];
+  };
+
+  if (Array.isArray(payload)) {
+    return extract(payload);
   }
   if (payload && typeof payload === 'object') {
     const obj = payload as any;
     if (Array.isArray(obj.workflows)) {
-      const ws = obj.workflows.filter(isWorkflowLike) as WorkflowLike[];
-      return ws.length > 0 ? ws : [];
+      return extract(obj.workflows);
     }
     if (Array.isArray(obj.data)) {
-      const ws = obj.data.filter(isWorkflowLike) as WorkflowLike[];
-      return ws.length > 0 ? ws : [];
+      return extract(obj.data);
     }
   }
   return null;
@@ -79,12 +96,26 @@ export async function listWorkflows(opts: {
 
 export function findWorkflowByName(workflows: WorkflowLike[], workflowName: string): WorkflowLike {
   const needle = normalizeName(workflowName);
-  const matches = workflows.filter((w) => normalizeName(w.name) === needle);
+  
+  // Try exact name match first
+  let matches = workflows.filter((w) => normalizeName(w.name) === needle);
+  
+  // If no match and workflow has no explicit name, try matching against filename
+  if (matches.length === 0) {
+    matches = workflows.filter((w) => {
+      const path = w.path || w.file || '';
+      const filename = path.split('/').pop()?.replace(/\.ya?ml$/, '') || '';
+      return normalizeName(filename) === needle || normalizeName(path) === needle;
+    });
+  }
 
   if (matches.length === 1) return matches[0]!;
 
   const available = workflows
-    .map((w) => `- ${w.name}${w.id != null ? ` (id=${w.id})` : ''}${w.path ? ` [${w.path}]` : ''}`)
+    .map((w) => {
+      const name = w.name || (w.path || w.file || 'unnamed');
+      return `- ${name}${w.id != null ? ` (id=${w.id})` : ''}${w.path ? ` [${w.path}]` : ''}`;
+    })
     .slice(0, 50)
     .join('\n');
 
@@ -94,7 +125,10 @@ export function findWorkflowByName(workflows: WorkflowLike[], workflowName: stri
 
   throw new Error(
     `Workflow '${workflowName}' is ambiguous (${matches.length} matches). Please disambiguate by renaming workflows.\n` +
-      `Matches:\n${matches.map((w) => `- ${w.name}${w.id != null ? ` (id=${w.id})` : ''}${w.path ? ` [${w.path}]` : ''}`).join('\n')}`,
+      `Matches:\n${matches.map((w) => {
+        const name = w.name || (w.path || w.file || 'unnamed');
+        return `- ${name}${w.id != null ? ` (id=${w.id})` : ''}${w.path ? ` [${w.path}]` : ''}`;
+      }).join('\n')}`,
   );
 }
 
