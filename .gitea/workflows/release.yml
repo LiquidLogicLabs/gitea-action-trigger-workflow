@@ -1,0 +1,98 @@
+name: Release (semver)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install
+        run: npm ci
+
+      - name: Build (verifies dist is reproducible)
+        run: |
+          npm run build
+          git diff --exit-code
+
+      - name: Create release (Gitea API)
+        env:
+          TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TAG="${GITEA_REF_NAME:-${GITHUB_REF_NAME:-}}"
+          if [ -z "$TAG" ]; then
+            echo "Unable to determine tag name (GITEA_REF_NAME/GITHUB_REF_NAME missing)" >&2
+            exit 1
+          fi
+
+          BASE="${GITEA_SERVER_URL:-${GITHUB_SERVER_URL:-}}"
+          REPO="${GITEA_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
+          if [ -z "$BASE" ] || [ -z "$REPO" ]; then
+            echo "Missing BASE/REPO env (GITEA_SERVER_URL + GITEA_REPOSITORY)" >&2
+            exit 1
+          fi
+
+          API="${BASE%/}/api/v1/repos/${REPO}/releases"
+
+          # Try to create release; if it already exists, Gitea typically returns 409.
+          CODE=$(curl -sS -o /tmp/release.json -w "%{http_code}" \
+            -H "Authorization: token ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"draft\":false,\"prerelease\":false}" \
+            "${API}")
+
+          if [ "$CODE" = "201" ] || [ "$CODE" = "200" ] || [ "$CODE" = "409" ]; then
+            echo "Release step finished (http=$CODE)"
+          else
+            echo "Release creation failed (http=$CODE):" >&2
+            cat /tmp/release.json >&2 || true
+            exit 1
+          fi
+
+      - name: Move floating tags (v1, v1.2)
+        env:
+          TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+
+          TAG="${GITEA_REF_NAME:-${GITHUB_REF_NAME:-}}"
+          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Tag '$TAG' not semver vX.Y.Z; skipping floating tags"
+            exit 0
+          fi
+
+          MAJOR="v${BASH_REMATCH[1]}"
+          MINOR="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+
+          BASE="${GITEA_SERVER_URL:-${GITHUB_SERVER_URL:-}}"
+          REPO="${GITEA_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
+          if [ -z "$BASE" ] || [ -z "$REPO" ]; then
+            echo "Missing BASE/REPO env (GITEA_SERVER_URL + GITEA_REPOSITORY)" >&2
+            exit 1
+          fi
+
+          HOST="$(echo "${BASE%/}" | sed -E 's#^https?://##')"
+          git fetch --tags --force
+          SHA="$(git rev-list -n1 "$TAG")"
+
+          git tag -f "$MAJOR" "$SHA"
+          git tag -f "$MINOR" "$SHA"
+
+          # Force-push the moving tags. Use token auth over HTTPS.
+          git remote set-url origin "https://oauth2:${TOKEN}@${HOST}/${REPO}.git"
+          git push --force --quiet origin "$MAJOR" "$MINOR"
+
+

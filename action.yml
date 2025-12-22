@@ -1,0 +1,41 @@
+name: Trigger remote workflow (Gitea)
+description: Trigger a workflow in another Gitea repository (same or different instance).
+author: ravenwolf.org
+
+inputs:
+  repo:
+    description: >
+      Target repository. Formats supported:
+      - owner/repo
+      - https://gitea.example.com/owner/repo
+    required: false
+  workflow_name:
+    description: Workflow name (the `name:` in the workflow file) to dispatch.
+    required: true
+  ref:
+    description: Git ref to run the workflow on (branch/tag/SHA).
+    required: false
+    default: main
+  base_url:
+    description: >
+      Base URL for the target Gitea instance (e.g. https://gitea.example.com).
+      If omitted, derived from `repo` when `repo` is a URL, otherwise from runner environment.
+    required: false
+  token:
+    description: >
+      API token for the target Gitea instance. If omitted, falls back to runner environment token.
+      Token must have permission to read workflows and dispatch runs in the target repo.
+    required: false
+  inputs:
+    description: Optional JSON object string of inputs for the workflow dispatch.
+    required: false
+  verbose:
+    description: Enable verbose logging (HTTP attempts, endpoint discovery, response snippets).
+    required: false
+    default: "false"
+
+runs:
+  using: node20
+  main: dist/index.js
+
+
