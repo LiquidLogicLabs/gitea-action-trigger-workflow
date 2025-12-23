@@ -18,11 +18,7 @@ pnpm-debug.log*
 
 # IDE and editor files
 .idea/
-.vscode/
 .bmad-core/
-.cursor/
-!.cursor/rules/
-!.cursor/rules/*.mdc
 .github/chatmodes/
 *.swp
 *.swo
