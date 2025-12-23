@@ -18,6 +18,8 @@ pnpm-debug.log*
 
 # IDE and editor files
 .idea/
+.bmad-core/
+.github/chatmodes/
 *.swp
 *.swo
 *~
@@ -28,7 +30,3 @@ pnpm-debug.log*
 # Test coverage
 coverage/
 .nyc_output/
-
-# AI Tools
-.bmad-core/
-.github/chatmodes/
