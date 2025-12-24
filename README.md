@@ -1,6 +1,6 @@
 # gitea-action-trigger-workflow
 
-[![GitHub release](https://img.shields.io/github/v/release/LiquidLogicLabs/gitea-action-trigger-workflow)](https://github.com/LiquidLogicLabs/gitea-action-trigger-workflow/releases)
+[![GitHub release](https://img.shields.io/github/v/release/LiquidLogicLabs/gitea-action-trigger-workflow?sort=semver)](https://github.com/LiquidLogicLabs/gitea-action-trigger-workflow/releases)
 [![GitHub Marketplace](https://img.shields.io/badge/marketplace-gitea--action--trigger--workflow-blue?logo=github)](https://github.com/marketplace/actions/gitea-action-trigger-workflow)
 
 A GitHub Action that triggers a workflow in another repository hosted on **Gitea** (same instance or a different instance).
