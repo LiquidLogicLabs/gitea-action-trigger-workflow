@@ -1,143 +1,96 @@
-name: Release (semver)
+name: Release
 
 on:
   push:
     tags:
-      - "v*.*.*"
+      - 'v*.*.*'  # Semver tags only
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
-  release:
+  lint:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: '20'
+          cache: 'npm'
 
-      - name: Install
+      - name: Install dependencies
         run: npm ci
 
-      - name: Build (verifies dist is reproducible)
-        run: |
-          npm run build
-          if ! git diff --exit-code dist/; then
-            echo "Error: dist/ has uncommitted changes. Please commit the built dist/index.js"
-            exit 1
-          fi
+      - name: Run linter
+        run: npm run lint
 
-      - name: Update CHANGELOG.md
-        run: |
-          npm run changelog:release || echo "" > CHANGELOG.md
+      - name: Type check
+        run: npx tsc --noEmit
+
+  test:
+    uses: ./.github/workflows/test.yml
+
+  release:
+    needs: [lint, test]  # REQUIRED: Lint and tests must pass before release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog generation
+
+      - name: Check version format in tag
+        id: version
+        uses: nowsprinting/check-version-format-action@v4
+        with:
+          prefix: 'v'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and package action
+        run: npm run package
 
       - name: Generate release notes
-        id: release-notes
-        uses: release-changelog-builder-action@v2
+        id: release_notes
+        uses: mikepenz/release-changelog-builder-action@v6
         with:
-          configuration: |
+          mode: "HYBRID"
+          configurationJson: |
             {
-              "categories": [
-                {
-                  "title": "## 🚀 Features",
-                  "labels": ["enhancement", "feature"]
-                },
-                {
-                  "title": "## 🐛 Bug Fixes",
-                  "labels": ["bug", "fix"]
-                },
-                {
-                  "title": "## 📝 Documentation",
-                  "labels": ["documentation", "docs"]
-                },
-                {
-                  "title": "## 🔧 Maintenance",
-                  "labels": ["chore", "refactor", "maintenance"]
-                }
-              ],
-              "ignore_labels": ["ignore-for-release"],
-              "sort": "ASC"
+              "template": "#{{CHANGELOG}}\n\n<details>\n<summary>Pull Requests</summary>\n\n#{{PR_LIST}}\n</details>\n\n---\n\n### Usage\n\n```yaml\n- uses: LiquidLogicLabs/gitea-action-trigger-workflow@${{ github.ref_name }}\n  with:\n    workflow_name: 'Deploy'\n```"
             }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
 
-      - name: Generate release notes fallback
-        if: steps.release-notes.outcome == 'failure' || steps.release-notes.outcome == 'skipped' || steps.release-notes.outputs.changelog == '' || steps.release-notes.outputs.changelog == null
-        id: git-notes
-        run: |
-          CURRENT_TAG="${{ github.ref_name }}"
-          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "^${CURRENT_TAG}$" | head -1 || echo "")
-          
-          if [ -z "$PREVIOUS_TAG" ]; then
-            RANGE="HEAD"
-          else
-            RANGE="${PREVIOUS_TAG}..${CURRENT_TAG}"
-          fi
-          
-          {
-            echo "## What's Changed"
-            echo ""
-            git log ${RANGE} --pretty=format:"- %s (%h)" --no-merges | head -50
-            echo ""
-            if [ -n "$PREVIOUS_TAG" ]; then
-              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${CURRENT_TAG}"
-            fi
-          } > RELEASE_NOTES.md
-          
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          cat RELEASE_NOTES.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
         with:
-          body: ${{ steps.release-notes.outputs.changelog != '' && steps.release-notes.outputs.changelog || steps.git-notes.outputs.notes }}
-          body_path: ""
-          generate_release_notes: false
+          tag: ${{ github.ref_name }}
+          name: Release ${{ steps.version.outputs.full_without_prefix }}
+          body: ${{ steps.release_notes.outputs.changelog }}
+          draft: false
+          prerelease: ${{ steps.version.outputs.is_stable != 'true' }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Commit updated CHANGELOG.md
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Release Summary
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md
-          if git diff --staged --quiet; then
-            echo "No changes to CHANGELOG.md to commit"
+          echo "## 🎉 Release Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.version.outputs.full_without_prefix }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **GitHub Release**: [View Release](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }})" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.version.outputs.is_stable }}" != "true" ]; then
+            echo "- **Status**: ⚠️ Pre-release (for testing)" >> $GITHUB_STEP_SUMMARY
           else
-            git commit -m "chore: update CHANGELOG.md for ${{ github.ref_name }}"
-            git push origin HEAD:main
+            echo "- **Status**: ✅ Stable release" >> $GITHUB_STEP_SUMMARY
           fi
-
-      - name: Move floating tags (v1, v1.2)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-
-          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            echo "Tag '$TAG' not semver vX.Y.Z; skipping floating tags"
-            exit 0
-          fi
-
-          MAJOR="v${BASH_REMATCH[1]}"
-          MINOR="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-
-          git fetch --tags --force
-          SHA="$(git rev-list -n1 "$TAG")"
-
-          git tag -f "$MAJOR" "$SHA"
-          git tag -f "$MINOR" "$SHA"
-
-          git push --force origin "$MAJOR" "$MINOR"
-
-
