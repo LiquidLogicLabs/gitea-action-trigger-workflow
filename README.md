@@ -237,6 +237,13 @@ Or pin to a specific version:
 uses: LiquidLogicLabs/gitea-action-trigger-workflow@v0.1.2  # Specific version
 ```
 
+## Documentation
+
+For developers and contributors:
+
+- **[Development Guide](docs/DEVELOPMENT.md)** - Setup, development workflow, and contributing guidelines
+- **[Testing Guide](docs/TESTING.md)** - Complete testing documentation
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
