@@ -1,6 +1,6 @@
 {
   "name": "git-action-trigger-workflow",
-  "version": "0.1.4",
+  "version": "1.0.0",
   "description": "Git Action: trigger a workflow in another repository on GitHub or Gitea.",
   "private": true,
   "type": "commonjs",
