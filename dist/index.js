@@ -25682,6 +25682,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.__internal = void 0;
 exports.parseRepoTarget = parseRepoTarget;
 exports.readConfig = readConfig;
 const core = __importStar(__nccwpck_require__(7484));
@@ -25690,7 +25691,7 @@ function parseBool(v, defaultValue) {
         return defaultValue;
     return ['1', 'true', 'yes', 'on'].includes(v.toLowerCase());
 }
-function mustGetEnvAny(names) {
+function getEnvAny(names) {
     for (const n of names) {
         const v = process.env[n];
         if (v && v.trim() !== '')
@@ -25699,9 +25700,6 @@ function mustGetEnvAny(names) {
     return undefined;
 }
 function parseRepoTarget(repoInput) {
-    // Supports:
-    // - owner/repo
-    // - https://gitea.example.com/owner/repo(.git)
     if (repoInput.includes('://')) {
         const u = new URL(repoInput);
         const parts = u.pathname.replace(/^\//, '').replace(/\.git$/, '').split('/');
@@ -25715,212 +25713,98 @@ function parseRepoTarget(repoInput) {
         throw new Error(`Invalid 'repo' format: ${repoInput} (expected owner/repo or URL)`);
     return { owner: m[1], repo: m[2] };
 }
-function normalizeBaseUrl(baseUrl) {
+function normalizeOrigin(baseUrl) {
     const u = new URL(baseUrl);
     return u.origin;
+}
+function detectPlatform(baseUrl, repoUrlHost) {
+    const host = (baseUrl && new URL(baseUrl).host) || repoUrlHost || '';
+    const hasGithubEnv = !!getEnvAny(['GITHUB_SERVER_URL', 'GITHUB_REPOSITORY', 'GITHUB_API_URL', 'GITHUB_ACTIONS']);
+    if (host.includes('github.') || host === 'github.com' || hasGithubEnv) {
+        return 'github';
+    }
+    return 'gitea';
+}
+function computeApiBase(platform, baseUrl) {
+    if (platform === 'github') {
+        const host = new URL(baseUrl).host;
+        if (host === 'github.com') {
+            return 'https://api.github.com';
+        }
+        // GHES: server URL -> append /api/v3
+        return `${normalizeOrigin(baseUrl)}/api/v3`;
+    }
+    // Gitea: API rooted at server origin
+    return normalizeOrigin(baseUrl);
+}
+function parseInputs(inputsRaw) {
+    if (!inputsRaw)
+        return {};
+    try {
+        const v = JSON.parse(inputsRaw);
+        if (v && typeof v === 'object' && !Array.isArray(v))
+            return { ...v };
+        throw new Error('inputs must be a JSON object');
+    }
+    catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(`Invalid 'inputs' JSON: ${msg}`);
+    }
 }
 function readConfig() {
     const repoInput = core.getInput('repo')?.trim();
     const workflowName = core.getInput('workflow_name', { required: true }).trim();
-    const ref = (core.getInput('ref') || '').trim() || 'main';
+    const refInput = (core.getInput('ref') || '').trim();
     const baseUrlInput = core.getInput('base_url')?.trim();
     const tokenInput = core.getInput('token')?.trim();
     const inputsRaw = core.getInput('inputs')?.trim();
     const verbose = parseBool(core.getInput('verbose')?.trim(), false);
-    // Defaults from environment (Gitea-compatible + GitHub-compatible fallbacks)
-    const envRepo = mustGetEnvAny(['GITEA_REPOSITORY', 'GITHUB_REPOSITORY']);
-    const envBaseUrl = mustGetEnvAny(['GITEA_SERVER_URL', 'GITHUB_SERVER_URL']);
-    const envToken = mustGetEnvAny(['GITEA_TOKEN', 'GITHUB_TOKEN']);
-    const envRef = mustGetEnvAny(['GITEA_REF_NAME', 'GITHUB_REF_NAME', 'GITEA_REF']);
+    const envRepo = getEnvAny(['GITEA_REPOSITORY', 'GITHUB_REPOSITORY']);
+    const envBaseUrl = getEnvAny(['GITEA_SERVER_URL', 'GITHUB_SERVER_URL']);
+    const envToken = getEnvAny(['GITEA_TOKEN', 'GITHUB_TOKEN']);
+    const envRef = getEnvAny(['GITEA_REF_NAME', 'GITHUB_REF_NAME', 'GITEA_REF']);
     const repoResolvedInput = repoInput || envRepo;
     if (!repoResolvedInput) {
         throw new Error(`Missing repo. Provide input 'repo' or ensure env GITEA_REPOSITORY/GITHUB_REPOSITORY is set.`);
     }
     const target = parseRepoTarget(repoResolvedInput);
-    // base_url default order:
-    // 1) explicit base_url input
-    // 2) derived from repo URL (if repo was URL)
-    // 3) runner env base URL
-    const baseUrl = baseUrlInput || target.baseUrl || envBaseUrl || (() => {
-        throw new Error(`Missing base URL. Provide input 'base_url', use a URL in 'repo', or ensure env GITEA_SERVER_URL/GITHUB_SERVER_URL is set.`);
-    })();
-    const token = tokenInput || envToken || (() => {
-        throw new Error(`Missing token. Provide input 'token' or ensure env GITEA_TOKEN/GITHUB_TOKEN is set.`);
-    })();
-    const parsedInputs = {};
-    if (inputsRaw) {
-        try {
-            const v = JSON.parse(inputsRaw);
-            if (v && typeof v === 'object' && !Array.isArray(v))
-                Object.assign(parsedInputs, v);
-            else
-                throw new Error('inputs must be a JSON object');
-        }
-        catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            throw new Error(`Invalid 'inputs' JSON: ${msg}`);
-        }
-    }
+    const baseUrl = baseUrlInput ||
+        target.baseUrl ||
+        envBaseUrl ||
+        (() => {
+            throw new Error(`Missing base URL. Provide input 'base_url', use a URL in 'repo', or ensure env GITEA_SERVER_URL/GITHUB_SERVER_URL is set.`);
+        })();
+    const platform = detectPlatform(baseUrl, target.baseUrl ? new URL(baseUrl).host : undefined);
+    const apiBaseUrl = computeApiBase(platform, baseUrl);
+    const token = tokenInput ||
+        envToken ||
+        (() => {
+            throw new Error(`Missing token. Provide input 'token' or ensure env GITEA_TOKEN/GITHUB_TOKEN is set.`);
+        })();
+    const parsedInputs = parseInputs(inputsRaw);
     return {
-        baseUrl: normalizeBaseUrl(baseUrl),
+        platform,
+        baseUrl: normalizeOrigin(baseUrl),
+        apiBaseUrl,
         owner: target.owner,
         repo: target.repo,
         workflowName,
-        ref: ref || envRef || 'main',
+        ref: refInput || envRef || 'main',
         token,
         inputs: parsedInputs,
         verbose,
     };
 }
+exports.__internal = {
+    detectPlatform,
+    computeApiBase,
+    normalizeOrigin,
+};
 
 
 /***/ }),
 
-/***/ 9549:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.listWorkflows = listWorkflows;
-exports.findWorkflowByName = findWorkflowByName;
-exports.dispatchWorkflow = dispatchWorkflow;
-function isWorkflowLike(x) {
-    if (!x || typeof x !== 'object')
-        return false;
-    const obj = x;
-    // Workflow must have either a name or a path/file to identify it
-    const hasName = typeof obj.name === 'string' && obj.name.trim() !== '';
-    const hasPath = typeof obj.path === 'string' && obj.path.trim() !== '';
-    const hasFile = typeof obj.file === 'string' && obj.file.trim() !== '';
-    return hasName || hasPath || hasFile;
-}
-function normalizeWorkflow(w) {
-    // If workflow has no name but has a path/file, use that as the name
-    if ((!w.name || w.name.trim() === '') && (w.path || w.file)) {
-        const fallback = w.path || w.file || '';
-        // Extract just the filename without path/extension for cleaner display
-        const filename = fallback.split('/').pop()?.replace(/\.ya?ml$/, '') || fallback;
-        return { ...w, name: filename };
-    }
-    return w;
-}
-function extractWorkflows(payload) {
-    const extract = (items) => {
-        const ws = items.filter(isWorkflowLike).map(normalizeWorkflow);
-        return ws.length > 0 ? ws : [];
-    };
-    if (Array.isArray(payload)) {
-        return extract(payload);
-    }
-    if (payload && typeof payload === 'object') {
-        const obj = payload;
-        if (Array.isArray(obj.workflows)) {
-            return extract(obj.workflows);
-        }
-        if (Array.isArray(obj.data)) {
-            return extract(obj.data);
-        }
-    }
-    return null;
-}
-function normalizeName(s) {
-    return s.trim();
-}
-async function listWorkflows(opts) {
-    const { http, logger, owner, repo, verbose } = opts;
-    const candidates = [
-        `/api/v1/repos/${owner}/${repo}/actions/workflows`,
-        `/api/v1/repos/${owner}/${repo}/actions/workflows?per_page=100`,
-        `/api/v1/repos/${owner}/${repo}/actions/workflows?limit=100`,
-    ];
-    const attempts = [];
-    for (const endpoint of candidates) {
-        const res = await http.getJson(endpoint);
-        attempts.push({ endpoint, status: res.status });
-        if (res.status >= 200 && res.status < 300 && res.data !== undefined) {
-            const ws = extractWorkflows(res.data);
-            if (ws !== null) {
-                if (verbose)
-                    logger.debug(`Using workflows list endpoint: ${endpoint} (count=${ws.length})`);
-                return { endpoint, workflows: ws };
-            }
-            attempts[attempts.length - 1].hint = 'Unexpected JSON schema';
-        }
-    }
-    const summary = attempts
-        .map((a) => `- ${a.status} ${a.endpoint}${a.hint ? ` (${a.hint})` : ''}`)
-        .join('\n');
-    throw new Error(`Unable to list workflows via API. This Gitea instance may not expose an Actions workflows API.\n` +
-        `Tried:\n${summary}\n\n` +
-        `If you believe your server supports it, enable verbose logging and verify your base_url/token permissions.`);
-}
-function findWorkflowByName(workflows, workflowName) {
-    const needle = normalizeName(workflowName);
-    // Try exact name match first
-    let matches = workflows.filter((w) => normalizeName(w.name) === needle);
-    // If no match and workflow has no explicit name, try matching against filename
-    if (matches.length === 0) {
-        matches = workflows.filter((w) => {
-            const path = w.path || w.file || '';
-            const filename = path.split('/').pop()?.replace(/\.ya?ml$/, '') || '';
-            return normalizeName(filename) === needle || normalizeName(path) === needle;
-        });
-    }
-    if (matches.length === 1)
-        return matches[0];
-    const available = workflows
-        .map((w) => {
-        const name = w.name || (w.path || w.file || 'unnamed');
-        return `- ${name}${w.id != null ? ` (id=${w.id})` : ''}${w.path ? ` [${w.path}]` : ''}`;
-    })
-        .slice(0, 50)
-        .join('\n');
-    if (matches.length === 0) {
-        throw new Error(`Workflow '${workflowName}' not found. Available workflows:\n${available || '(none found)'}`);
-    }
-    throw new Error(`Workflow '${workflowName}' is ambiguous (${matches.length} matches). Please disambiguate by renaming workflows.\n` +
-        `Matches:\n${matches.map((w) => {
-            const name = w.name || (w.path || w.file || 'unnamed');
-            return `- ${name}${w.id != null ? ` (id=${w.id})` : ''}${w.path ? ` [${w.path}]` : ''}`;
-        }).join('\n')}`);
-}
-async function dispatchWorkflow(opts) {
-    const { http, logger, owner, repo, workflow, ref, inputs, verbose } = opts;
-    const body = { ref, inputs };
-    const dispatchCandidates = [];
-    if (workflow.id != null) {
-        dispatchCandidates.push(`/api/v1/repos/${owner}/${repo}/actions/workflows/${workflow.id}/dispatches`, `/api/v1/repos/${owner}/${repo}/actions/workflows/${workflow.id}/dispatch`);
-    }
-    // If server returns a path/filename, try file-based dispatch routes too.
-    const file = workflow.path || workflow.file;
-    if (file) {
-        const enc = encodeURIComponent(file);
-        dispatchCandidates.push(`/api/v1/repos/${owner}/${repo}/actions/workflows/${enc}/dispatches`, `/api/v1/repos/${owner}/${repo}/actions/workflows/${enc}/dispatch`);
-    }
-    // As a last resort, try a name-based route (some servers might support it).
-    const nameEnc = encodeURIComponent(workflow.name);
-    dispatchCandidates.push(`/api/v1/repos/${owner}/${repo}/actions/workflows/${nameEnc}/dispatches`, `/api/v1/repos/${owner}/${repo}/actions/workflows/${nameEnc}/dispatch`);
-    const attempts = [];
-    for (const endpoint of dispatchCandidates) {
-        const res = await http.postJson(endpoint, body);
-        attempts.push({ endpoint, status: res.status });
-        if (res.status >= 200 && res.status < 300) {
-            if (verbose)
-                logger.debug(`Dispatched via: ${endpoint} (${res.status})`);
-            return { endpoint, status: res.status };
-        }
-    }
-    const summary = attempts.map((a) => `- ${a.status} ${a.endpoint}`).join('\n');
-    throw new Error(`Unable to dispatch workflow '${workflow.name}'. This server may not support remote dispatch via API.\n` +
-        `Tried:\n${summary}\n\n` +
-        `If you control the target repo, a reliable fallback is to add a workflow trigger based on a repo event you can create via API (e.g. push tag/commit), or expose a lightweight webhook endpoint that triggers the workflow.`);
-}
-
-
-/***/ }),
-
-/***/ 6803:
+/***/ 3329:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -25933,13 +25817,13 @@ function safeTruncate(s, max) {
     return `${s.slice(0, max)}…(truncated)`;
 }
 function createHttpClient(opts) {
-    const { baseUrl, token, logger, verbose } = opts;
+    const { baseUrl, token, logger, verbose, userAgent = 'git-action-trigger-workflow' } = opts;
     async function request(method, path, body) {
         const url = new URL(path, baseUrl).toString();
         const headers = {
             Accept: 'application/json',
             Authorization: `token ${token}`,
-            'User-Agent': 'gitea-action-trigger-workflow',
+            'User-Agent': userAgent,
         };
         let payload;
         if (body !== undefined) {
@@ -25972,6 +25856,87 @@ function createHttpClient(opts) {
         postJson: (path, body) => request('POST', path, body),
     };
 }
+
+
+/***/ }),
+
+/***/ 9407:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const core = __importStar(__nccwpck_require__(7484));
+const config_1 = __nccwpck_require__(2973);
+const client_1 = __nccwpck_require__(3329);
+const logger_1 = __nccwpck_require__(6999);
+const platforms_1 = __nccwpck_require__(1376);
+const workflows_1 = __nccwpck_require__(163);
+async function run() {
+    const cfg = (0, config_1.readConfig)();
+    const log = new logger_1.Logger(cfg.verbose);
+    core.setSecret(cfg.token);
+    log.info(`Triggering workflow '${cfg.workflowName}' in ${cfg.baseUrl}/${cfg.owner}/${cfg.repo} on ref '${cfg.ref}' (platform=${cfg.platform})`);
+    log.debug(`inputs keys: ${Object.keys(cfg.inputs).join(', ') || '(none)'}`);
+    const http = (0, client_1.createHttpClient)({
+        baseUrl: cfg.apiBaseUrl,
+        token: cfg.token,
+        logger: log,
+        verbose: cfg.verbose,
+        userAgent: 'git-action-trigger-workflow',
+    });
+    const client = (0, platforms_1.createPlatformClient)(cfg.platform, {
+        baseUrl: cfg.baseUrl,
+        apiBaseUrl: cfg.apiBaseUrl,
+        owner: cfg.owner,
+        repo: cfg.repo,
+        token: cfg.token,
+        logger: log,
+        verbose: cfg.verbose,
+        http,
+    });
+    const { workflows } = await client.listWorkflows();
+    const wf = (0, workflows_1.findWorkflowByName)(workflows, cfg.workflowName);
+    const result = await client.dispatchWorkflow(wf, cfg.ref, cfg.inputs);
+    log.info(`Dispatch request accepted (${result.status}).`);
+}
+run().catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    core.setFailed(msg);
+});
 
 
 /***/ }),
@@ -26076,82 +26041,304 @@ function createLogger(verbose) {
 
 /***/ }),
 
-/***/ 1730:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+/***/ 4862:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-const core = __importStar(__nccwpck_require__(7484));
-const config_1 = __nccwpck_require__(2973);
-const http_1 = __nccwpck_require__(6803);
-const gitea_1 = __nccwpck_require__(9549);
-const logger_1 = __nccwpck_require__(6999);
-async function run() {
-    const cfg = (0, config_1.readConfig)();
-    const log = new logger_1.Logger(cfg.verbose);
-    // Mask token in logs
-    core.setSecret(cfg.token);
-    log.info(`Triggering workflow '${cfg.workflowName}' in ${cfg.baseUrl}/${cfg.owner}/${cfg.repo} on ref '${cfg.ref}'`);
-    log.debug(`inputs keys: ${Object.keys(cfg.inputs).join(', ') || '(none)'}`);
-    const http = (0, http_1.createHttpClient)({ baseUrl: cfg.baseUrl, token: cfg.token, logger: log, verbose: cfg.verbose });
-    const { workflows } = await (0, gitea_1.listWorkflows)({
-        http,
-        logger: log,
-        owner: cfg.owner,
-        repo: cfg.repo,
-        verbose: cfg.verbose,
-    });
-    const wf = (0, gitea_1.findWorkflowByName)(workflows, cfg.workflowName);
-    const result = await (0, gitea_1.dispatchWorkflow)({
-        http,
-        logger: log,
-        owner: cfg.owner,
-        repo: cfg.repo,
-        workflow: wf,
-        ref: cfg.ref,
-        inputs: cfg.inputs,
-        verbose: cfg.verbose,
-    });
-    log.info(`Dispatch request accepted (${result.status}).`);
+exports.createGiteaClient = createGiteaClient;
+exports.findWorkflowForGitea = findWorkflowForGitea;
+const workflows_1 = __nccwpck_require__(163);
+function buildCandidates(owner, repo) {
+    return [
+        `/api/v1/repos/${owner}/${repo}/actions/workflows`,
+        `/api/v1/repos/${owner}/${repo}/actions/workflows?per_page=100`,
+        `/api/v1/repos/${owner}/${repo}/actions/workflows?limit=100`,
+    ];
 }
-run().catch((err) => {
-    const msg = err instanceof Error ? err.message : String(err);
-    core.setFailed(msg);
-});
+async function listWorkflowsInternal(opts) {
+    const { http, logger, owner, repo, verbose } = opts;
+    const candidates = buildCandidates(owner, repo);
+    const attempts = [];
+    for (const endpoint of candidates) {
+        const res = await http.getJson(endpoint);
+        attempts.push({ endpoint, status: res.status });
+        if (res.status >= 200 && res.status < 300 && res.data !== undefined) {
+            const ws = (0, workflows_1.extractWorkflows)(res.data);
+            if (ws !== null) {
+                if (verbose)
+                    logger.debug(`Using workflows list endpoint: ${endpoint} (count=${ws.length})`);
+                return { endpoint, workflows: ws };
+            }
+            attempts[attempts.length - 1].hint = 'Unexpected JSON schema';
+        }
+    }
+    const summary = attempts
+        .map((a) => `- ${a.status} ${a.endpoint}${a.hint ? ` (${a.hint})` : ''}`)
+        .join('\n');
+    throw new Error(`Unable to list workflows via API. This Gitea instance may not expose an Actions workflows API.\n` +
+        `Tried:\n${summary}\n\n` +
+        `If you believe your server supports it, enable verbose logging and verify your base_url/token permissions.`);
+}
+function buildDispatchCandidates(owner, repo, workflow) {
+    const dispatchCandidates = [];
+    if (workflow.id != null) {
+        dispatchCandidates.push(`/api/v1/repos/${owner}/${repo}/actions/workflows/${workflow.id}/dispatches`, `/api/v1/repos/${owner}/${repo}/actions/workflows/${workflow.id}/dispatch`);
+    }
+    const file = workflow.path || workflow.file;
+    if (file) {
+        const enc = encodeURIComponent(file);
+        dispatchCandidates.push(`/api/v1/repos/${owner}/${repo}/actions/workflows/${enc}/dispatches`, `/api/v1/repos/${owner}/${repo}/actions/workflows/${enc}/dispatch`);
+    }
+    const nameEnc = encodeURIComponent(workflow.name);
+    dispatchCandidates.push(`/api/v1/repos/${owner}/${repo}/actions/workflows/${nameEnc}/dispatches`, `/api/v1/repos/${owner}/${repo}/actions/workflows/${nameEnc}/dispatch`);
+    return dispatchCandidates;
+}
+async function dispatchWorkflowInternal(opts) {
+    const { http, logger, owner, repo, workflow, ref, inputs, verbose } = opts;
+    const body = { ref, inputs };
+    const dispatchCandidates = buildDispatchCandidates(owner, repo, workflow);
+    const attempts = [];
+    for (const endpoint of dispatchCandidates) {
+        const res = await http.postJson(endpoint, body);
+        attempts.push({ endpoint, status: res.status });
+        if (res.status >= 200 && res.status < 300) {
+            if (verbose)
+                logger.debug(`Dispatched via: ${endpoint} (${res.status})`);
+            return { endpoint, status: res.status };
+        }
+    }
+    const summary = attempts.map((a) => `- ${a.status} ${a.endpoint}`).join('\n');
+    throw new Error(`Unable to dispatch workflow '${workflow.name}'. This server may not support remote dispatch via API.\n` +
+        `Tried:\n${summary}\n\n` +
+        `If you control the target repo, a reliable fallback is to add a workflow trigger based on a repo event you can create via API (e.g. push tag/commit), or expose a lightweight webhook endpoint that triggers the workflow.`);
+}
+function createGiteaClient(ctx) {
+    const { http, logger, owner, repo, verbose } = ctx;
+    return {
+        listWorkflows: () => listWorkflowsInternal({
+            http,
+            logger,
+            owner,
+            repo,
+            verbose,
+        }),
+        dispatchWorkflow: (workflow, ref, inputs) => dispatchWorkflowInternal({
+            http,
+            logger,
+            owner,
+            repo,
+            workflow,
+            ref,
+            inputs,
+            verbose,
+        }),
+    };
+}
+function findWorkflowForGitea(workflows, workflowName) {
+    return (0, workflows_1.findWorkflowByName)(workflows, workflowName);
+}
+
+
+/***/ }),
+
+/***/ 6473:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createGithubClient = createGithubClient;
+exports.findWorkflowForGithub = findWorkflowForGithub;
+const workflows_1 = __nccwpck_require__(163);
+function buildListCandidates(owner, repo) {
+    return [
+        `/repos/${owner}/${repo}/actions/workflows?per_page=100`,
+        `/repos/${owner}/${repo}/actions/workflows`,
+    ];
+}
+async function listWorkflowsInternal(opts) {
+    const { http, logger, owner, repo, verbose } = opts;
+    const candidates = buildListCandidates(owner, repo);
+    const attempts = [];
+    for (const endpoint of candidates) {
+        const res = await http.getJson(endpoint);
+        attempts.push({ endpoint, status: res.status });
+        if (res.status >= 200 && res.status < 300 && res.data !== undefined) {
+            const ws = (0, workflows_1.extractWorkflows)(res.data);
+            if (ws !== null) {
+                if (verbose)
+                    logger.debug(`Using workflows list endpoint: ${endpoint} (count=${ws.length})`);
+                return { endpoint, workflows: ws };
+            }
+            attempts[attempts.length - 1].hint = 'Unexpected JSON schema';
+        }
+    }
+    const summary = attempts
+        .map((a) => `- ${a.status} ${a.endpoint}${a.hint ? ` (${a.hint})` : ''}`)
+        .join('\n');
+    throw new Error(`Unable to list workflows via GitHub API. Verify token permissions and repository access.\nTried:\n${summary}`);
+}
+function buildDispatchEndpoints(owner, repo, workflow) {
+    const endpoints = [];
+    const pathOrName = workflow.path || workflow.file || workflow.name;
+    if (workflow.id != null) {
+        endpoints.push(`/repos/${owner}/${repo}/actions/workflows/${workflow.id}/dispatches`);
+    }
+    if (pathOrName) {
+        const enc = encodeURIComponent(pathOrName);
+        endpoints.push(`/repos/${owner}/${repo}/actions/workflows/${enc}/dispatches`);
+    }
+    return endpoints;
+}
+async function dispatchWorkflowInternal(opts) {
+    const { http, logger, owner, repo, workflow, ref, inputs, verbose } = opts;
+    const body = { ref, inputs };
+    const endpoints = buildDispatchEndpoints(owner, repo, workflow);
+    const attempts = [];
+    for (const endpoint of endpoints) {
+        const res = await http.postJson(endpoint, body);
+        attempts.push({ endpoint, status: res.status });
+        if (res.status >= 200 && res.status < 300) {
+            if (verbose)
+                logger.debug(`Dispatched via: ${endpoint} (${res.status})`);
+            return { endpoint, status: res.status };
+        }
+    }
+    const summary = attempts.map((a) => `- ${a.status} ${a.endpoint}`).join('\n');
+    throw new Error(`Unable to dispatch workflow '${workflow.name}' via GitHub API.\nTried:\n${summary}\n` +
+        `Ensure the workflow has a workflow_dispatch trigger and the token has repo/workflow scope.`);
+}
+function createGithubClient(ctx) {
+    const { http, logger, owner, repo, verbose } = ctx;
+    return {
+        listWorkflows: () => listWorkflowsInternal({
+            http,
+            logger,
+            owner,
+            repo,
+            verbose,
+        }),
+        dispatchWorkflow: (workflow, ref, inputs) => dispatchWorkflowInternal({
+            http,
+            logger,
+            owner,
+            repo,
+            workflow,
+            ref,
+            inputs,
+            verbose,
+        }),
+    };
+}
+function findWorkflowForGithub(workflows, workflowName) {
+    return (0, workflows_1.findWorkflowByName)(workflows, workflowName);
+}
+
+
+/***/ }),
+
+/***/ 1376:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createPlatformClient = createPlatformClient;
+const gitea_1 = __nccwpck_require__(4862);
+const github_1 = __nccwpck_require__(6473);
+function createPlatformClient(platform, ctx) {
+    switch (platform) {
+        case 'gitea':
+            return (0, gitea_1.createGiteaClient)(ctx);
+        case 'github':
+            return (0, github_1.createGithubClient)(ctx);
+        default:
+            throw new Error(`Unsupported platform: ${platform}`);
+    }
+}
+
+
+/***/ }),
+
+/***/ 163:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.extractWorkflows = extractWorkflows;
+exports.findWorkflowByName = findWorkflowByName;
+function isWorkflowLike(x) {
+    if (!x || typeof x !== 'object')
+        return false;
+    const obj = x;
+    const hasName = typeof obj.name === 'string' && obj.name.trim() !== '';
+    const hasPath = typeof obj.path === 'string' && obj.path.trim() !== '';
+    const hasFile = typeof obj.file === 'string' && obj.file.trim() !== '';
+    return hasName || hasPath || hasFile;
+}
+function normalizeWorkflow(w) {
+    if ((!w.name || w.name.trim() === '') && (w.path || w.file)) {
+        const fallback = w.path || w.file || '';
+        const filename = fallback.split('/').pop()?.replace(/\.ya?ml$/, '') || fallback;
+        return { ...w, name: filename };
+    }
+    return w;
+}
+function extractWorkflows(payload) {
+    const extract = (items) => {
+        const ws = items.filter(isWorkflowLike).map(normalizeWorkflow);
+        return ws.length > 0 ? ws : [];
+    };
+    if (Array.isArray(payload)) {
+        return extract(payload);
+    }
+    if (payload && typeof payload === 'object') {
+        const obj = payload;
+        if (Array.isArray(obj.workflows)) {
+            return extract(obj.workflows);
+        }
+        if (Array.isArray(obj.data)) {
+            return extract(obj.data);
+        }
+    }
+    return null;
+}
+function normalizeName(s) {
+    return s.trim();
+}
+function findWorkflowByName(workflows, workflowName) {
+    const needle = normalizeName(workflowName);
+    let matches = workflows.filter((w) => normalizeName(w.name) === needle);
+    if (matches.length === 0) {
+        matches = workflows.filter((w) => {
+            const path = w.path || w.file || '';
+            const filename = path.split('/').pop()?.replace(/\.ya?ml$/, '') || '';
+            return normalizeName(filename) === needle || normalizeName(path) === needle;
+        });
+    }
+    if (matches.length === 1)
+        return matches[0];
+    const available = workflows
+        .map((w) => {
+        const name = w.name || (w.path || w.file || 'unnamed');
+        return `- ${name}${w.id != null ? ` (id=${w.id})` : ''}${w.path ? ` [${w.path}]` : ''}`;
+    })
+        .slice(0, 50)
+        .join('\n');
+    if (matches.length === 0) {
+        throw new Error(`Workflow '${workflowName}' not found. Available workflows:\n${available || '(none found)'}`);
+    }
+    throw new Error(`Workflow '${workflowName}' is ambiguous (${matches.length} matches). Please disambiguate by renaming workflows.\n` +
+        `Matches:\n${matches
+            .map((w) => {
+            const name = w.name || (w.path || w.file || 'unnamed');
+            return `- ${name}${w.id != null ? ` (id=${w.id})` : ''}${w.path ? ` [${w.path}]` : ''}`;
+        })
+            .join('\n')}`);
+}
 
 
 /***/ }),
@@ -28071,7 +28258,7 @@ module.exports = parseParams
 /******/ 	// startup
 /******/ 	// Load entry module and return exports
 /******/ 	// This entry module is referenced by other modules so it can't be inlined
-/******/ 	var __webpack_exports__ = __nccwpck_require__(1730);
+/******/ 	var __webpack_exports__ = __nccwpck_require__(9407);
 /******/ 	module.exports = __webpack_exports__;
 /******/ 	
 /******/ })()

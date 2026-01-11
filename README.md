@@ -1,25 +1,25 @@
-# gitea-action-trigger-workflow
+# git-action-trigger-workflow
 
 [![GitHub release](https://img.shields.io/github/v/release/LiquidLogicLabs/gitea-action-trigger-workflow?sort=semver)](https://github.com/LiquidLogicLabs/gitea-action-trigger-workflow/releases)
 [![GitHub Marketplace](https://img.shields.io/badge/marketplace-gitea--action--trigger--workflow-blue?logo=github)](https://github.com/marketplace/actions/gitea-action-trigger-workflow)
 
-A GitHub Action that triggers a workflow in another repository hosted on **Gitea** (same instance or a different instance).
+A GitHub Action that triggers a workflow in another repository hosted on **Gitea** or **GitHub** (self-hosted or cloud).
 
 ## Features
 
 - ✅ Trigger workflows in the same repository or remote repositories
-- ✅ Support for same Gitea instance or cross-instance workflows
+- ✅ Supports Gitea (self-hosted/cloud) and GitHub/GHES
 - ✅ Automatic workflow discovery by name
 - ✅ Flexible authentication (explicit token or environment fallback)
 - ✅ Support for workflow inputs
 - ✅ Verbose logging for debugging
-- ✅ Works with Gitea 1.23+ (with endpoint discovery)
+- ✅ Works with Gitea 1.23+ (with endpoint discovery) and GitHub/GHES API
 
 ## Quick Start
 
 ```yaml
 - name: Trigger remote workflow
-  uses: LiquidLogicLabs/gitea-action-trigger-workflow@v1
+  uses: LiquidLogicLabs/git-action-trigger-workflow@v1
   with:
     workflow_name: Deploy
 ```
@@ -36,12 +36,14 @@ A GitHub Action that triggers a workflow in another repository hosted on **Gitea
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
 | `workflow_name` | ✅ Yes | - | The top-level `name:` field in the workflow YAML file (or filename if no name field exists) |
-| `repo` | ❌ No | Current repo | Target repository. Supports `owner/repo` or full URL `https://gitea.example.com/owner/repo` |
+| `repo` | ❌ No | Current repo | Target repository. Supports `owner/repo` or full URL (GitHub or Gitea) |
 | `ref` | ❌ No | `main` | Git ref to run the workflow on (branch/tag/SHA) |
-| `base_url` | ❌ No | Auto-detected | Base URL for the target Gitea instance |
-| `token` | ❌ No | Runner token | API token for the target Gitea instance |
-| `inputs` | ❌ No | - | JSON object string of workflow inputs, e.g. `{"env":"prod","dry_run":true}` |
+| `base_url` | ❌ No | Auto-inferred | Auto-detected from repo URL or runner env (`GITHUB_SERVER_URL` / `GITEA_SERVER_URL`); override when needed |
+| `token` | ❌ No | Runner token | API token (`GITHUB_TOKEN`/`GITEA_TOKEN` or explicit `token`) |
+| `inputs` | ❌ No | - | JSON object string of workflow inputs, e.g. `{\"env\":\"prod\",\"dry_run\":true}` |
 | `verbose` | ❌ No | `false` | Enable verbose logging for debugging |
 
 ### Understanding `workflow_name`
@@ -95,7 +97,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger deploy workflow
-        uses: LiquidLogicLabs/gitea-action-trigger-workflow@v1
+        uses: LiquidLogicLabs/git-action-trigger-workflow@v1
         with:
           workflow_name: Deploy
 ```
@@ -113,7 +115,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger build workflow
-        uses: LiquidLogicLabs/gitea-action-trigger-workflow@v1
+        uses: LiquidLogicLabs/git-action-trigger-workflow@v1
         with:
           repo: other-owner/other-repo
           workflow_name: Build
@@ -134,7 +136,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger remote workflow
-        uses: LiquidLogicLabs/gitea-action-trigger-workflow@v1
+        uses: LiquidLogicLabs/git-action-trigger-workflow@v1
         with:
           repo: https://gitea.other.example.com/other-owner/other-repo
           workflow_name: Build
@@ -142,11 +144,32 @@ jobs:
           verbose: "true"
 ```
 
+### Trigger a workflow on GitHub (same org)
+
+```yaml
+name: Trigger GitHub workflow
+
+on:
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger GitHub workflow
+        uses: LiquidLogicLabs/git-action-trigger-workflow@v1
+        with:
+          repo: your-org/your-repo
+          workflow_name: CI
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+```
+
 ### With workflow inputs
 
 ```yaml
 - name: Trigger workflow with inputs
-  uses: LiquidLogicLabs/gitea-action-trigger-workflow@v1
+  uses: LiquidLogicLabs/git-action-trigger-workflow@v1
   with:
     workflow_name: Deploy
     inputs: |
@@ -168,12 +191,13 @@ The action requires an API token with sufficient permissions:
 
 1. **Explicit token** (recommended for cross-instance):
    ```yaml
-   token: ${{ secrets.OTHER_GITEA_TOKEN }}
+   token: ${{ secrets.MY_TOKEN }}
    ```
 
-2. **Environment fallback** (for same instance):
-   - Uses `GITEA_TOKEN` or `GITHUB_TOKEN` from the runner environment
-   - Automatically available in Gitea Actions runners
+2. **Environment fallback**:
+   - GitHub: `GITHUB_TOKEN` (or PAT for cross-repo)
+   - Gitea: `GITEA_TOKEN`
+   - GitHub or Gitea runners set these automatically
 
 The action sends the token as `Authorization: token <token>` in API requests.
 
@@ -234,7 +258,7 @@ uses: LiquidLogicLabs/gitea-action-trigger-workflow@v1  # Recommended
 Or pin to a specific version:
 
 ```yaml
-uses: LiquidLogicLabs/gitea-action-trigger-workflow@v0.1.2  # Specific version
+uses: LiquidLogicLabs/git-action-trigger-workflow@v0.1.2  # Specific version
 ```
 
 ## Documentation
@@ -243,6 +267,7 @@ For developers and contributors:
 
 - **[Development Guide](docs/DEVELOPMENT.md)** - Setup, development workflow, and contributing guidelines
 - **[Testing Guide](docs/TESTING.md)** - Complete testing documentation
+  - E2E tests use real APIs and skip automatically if `TEST_*` env/secrets are not provided.
 
 ## Contributing
 

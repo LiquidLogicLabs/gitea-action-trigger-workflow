@@ -1,5 +1,20 @@
 {
   "push": {
     "ref": "refs/tags/v1.0.0"
+  },
+  "secrets": {
+    "TEST_GITHUB_TOKEN": "ghp_example_replace_me",
+    "TEST_GITEA_TOKEN": "gt_example_replace_me"
+  },
+  "vars": {
+    "TEST_GITHUB_REPO": "owner/repo",
+    "TEST_GITHUB_SERVER_URL": "https://github.com",
+    "TEST_GITHUB_API_URL": "https://api.github.com",
+    "TEST_GITHUB_WORKFLOW": "",
+    "TEST_GITHUB_REF": "main",
+    "TEST_GITEA_REPO": "owner/repo",
+    "TEST_GITEA_URL": "https://gitea.example.com",
+    "TEST_GITEA_WORKFLOW": "",
+    "TEST_GITEA_REF": "main"
   }
 }

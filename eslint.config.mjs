@@ -1,13 +1,10 @@
-// ESLint 9 flat config
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
 
 export default [
   {
-    ignores: ['dist/', 'lib/', 'node_modules/', '*.js', '*.cjs', '**/__tests__/**', '**/*.test.ts'],
-  },
-  {
-    files: ['src/**/*.ts'],
+    files: ['src/**/*.ts', 'e2e/**/*.ts'],
+    ignores: ['dist/**', 'node_modules/**', 'lib/**'],
     languageOptions: {
       parser: tsparser,
       ecmaVersion: 2022,
@@ -23,3 +20,4 @@ export default [
     },
   },
 ];
+
