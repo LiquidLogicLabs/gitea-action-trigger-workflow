@@ -1,4 +1,4 @@
-import { Logger } from './logger';
+import { Logger } from '../logger';
 
 export type HttpClient = {
   getJson: <T>(path: string) => Promise<{ status: number; data?: T; text?: string }>;
@@ -15,15 +15,16 @@ export function createHttpClient(opts: {
   token: string;
   logger: Logger;
   verbose: boolean;
+  userAgent?: string;
 }): HttpClient {
-  const { baseUrl, token, logger, verbose } = opts;
+  const { baseUrl, token, logger, verbose, userAgent = 'git-action-trigger-workflow' } = opts;
 
   async function request<T>(method: string, path: string, body?: unknown) {
     const url = new URL(path, baseUrl).toString();
     const headers: Record<string, string> = {
       Accept: 'application/json',
       Authorization: `token ${token}`,
-      'User-Agent': 'gitea-action-trigger-workflow',
+      'User-Agent': userAgent,
     };
     let payload: string | undefined;
     if (body !== undefined) {
@@ -57,5 +58,4 @@ export function createHttpClient(opts: {
     postJson: <T>(path: string, body: unknown) => request<T>('POST', path, body),
   };
 }
-
 

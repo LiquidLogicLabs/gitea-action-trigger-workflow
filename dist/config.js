@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.__internal = void 0;
 exports.parseRepoTarget = parseRepoTarget;
 exports.readConfig = readConfig;
 const core = __importStar(require("@actions/core"));
@@ -41,7 +42,7 @@ function parseBool(v, defaultValue) {
         return defaultValue;
     return ['1', 'true', 'yes', 'on'].includes(v.toLowerCase());
 }
-function mustGetEnvAny(names) {
+function getEnvAny(names) {
     for (const n of names) {
         const v = process.env[n];
         if (v && v.trim() !== '')
@@ -50,9 +51,6 @@ function mustGetEnvAny(names) {
     return undefined;
 }
 function parseRepoTarget(repoInput) {
-    // Supports:
-    // - owner/repo
-    // - https://gitea.example.com/owner/repo(.git)
     if (repoInput.includes('://')) {
         const u = new URL(repoInput);
         const parts = u.pathname.replace(/^\//, '').replace(/\.git$/, '').split('/');
@@ -66,61 +64,91 @@ function parseRepoTarget(repoInput) {
         throw new Error(`Invalid 'repo' format: ${repoInput} (expected owner/repo or URL)`);
     return { owner: m[1], repo: m[2] };
 }
-function normalizeBaseUrl(baseUrl) {
+function normalizeOrigin(baseUrl) {
     const u = new URL(baseUrl);
     return u.origin;
+}
+function detectPlatform(baseUrl, repoUrlHost) {
+    const host = (baseUrl && new URL(baseUrl).host) || repoUrlHost || '';
+    const hasGithubEnv = !!getEnvAny(['GITHUB_SERVER_URL', 'GITHUB_REPOSITORY', 'GITHUB_API_URL', 'GITHUB_ACTIONS']);
+    if (host.includes('github.') || host === 'github.com' || hasGithubEnv) {
+        return 'github';
+    }
+    return 'gitea';
+}
+function computeApiBase(platform, baseUrl) {
+    if (platform === 'github') {
+        const host = new URL(baseUrl).host;
+        if (host === 'github.com') {
+            return 'https://api.github.com';
+        }
+        // GHES: server URL -> append /api/v3
+        return `${normalizeOrigin(baseUrl)}/api/v3`;
+    }
+    // Gitea: API rooted at server origin
+    return normalizeOrigin(baseUrl);
+}
+function parseInputs(inputsRaw) {
+    if (!inputsRaw)
+        return {};
+    try {
+        const v = JSON.parse(inputsRaw);
+        if (v && typeof v === 'object' && !Array.isArray(v))
+            return { ...v };
+        throw new Error('inputs must be a JSON object');
+    }
+    catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(`Invalid 'inputs' JSON: ${msg}`);
+    }
 }
 function readConfig() {
     const repoInput = core.getInput('repo')?.trim();
     const workflowName = core.getInput('workflow_name', { required: true }).trim();
-    const ref = (core.getInput('ref') || '').trim() || 'main';
+    const refInput = (core.getInput('ref') || '').trim();
     const baseUrlInput = core.getInput('base_url')?.trim();
     const tokenInput = core.getInput('token')?.trim();
     const inputsRaw = core.getInput('inputs')?.trim();
     const verbose = parseBool(core.getInput('verbose')?.trim(), false);
-    // Defaults from environment (Gitea-compatible + GitHub-compatible fallbacks)
-    const envRepo = mustGetEnvAny(['GITEA_REPOSITORY', 'GITHUB_REPOSITORY']);
-    const envBaseUrl = mustGetEnvAny(['GITEA_SERVER_URL', 'GITHUB_SERVER_URL']);
-    const envToken = mustGetEnvAny(['GITEA_TOKEN', 'GITHUB_TOKEN']);
-    const envRef = mustGetEnvAny(['GITEA_REF_NAME', 'GITHUB_REF_NAME', 'GITEA_REF']);
+    const envRepo = getEnvAny(['GITEA_REPOSITORY', 'GITHUB_REPOSITORY']);
+    const envBaseUrl = getEnvAny(['GITEA_SERVER_URL', 'GITHUB_SERVER_URL']);
+    const envToken = getEnvAny(['GITEA_TOKEN', 'GITHUB_TOKEN']);
+    const envRef = getEnvAny(['GITEA_REF_NAME', 'GITHUB_REF_NAME', 'GITEA_REF']);
     const repoResolvedInput = repoInput || envRepo;
     if (!repoResolvedInput) {
         throw new Error(`Missing repo. Provide input 'repo' or ensure env GITEA_REPOSITORY/GITHUB_REPOSITORY is set.`);
     }
     const target = parseRepoTarget(repoResolvedInput);
-    // base_url default order:
-    // 1) explicit base_url input
-    // 2) derived from repo URL (if repo was URL)
-    // 3) runner env base URL
-    const baseUrl = baseUrlInput || target.baseUrl || envBaseUrl || (() => {
-        throw new Error(`Missing base URL. Provide input 'base_url', use a URL in 'repo', or ensure env GITEA_SERVER_URL/GITHUB_SERVER_URL is set.`);
-    })();
-    const token = tokenInput || envToken || (() => {
-        throw new Error(`Missing token. Provide input 'token' or ensure env GITEA_TOKEN/GITHUB_TOKEN is set.`);
-    })();
-    const parsedInputs = {};
-    if (inputsRaw) {
-        try {
-            const v = JSON.parse(inputsRaw);
-            if (v && typeof v === 'object' && !Array.isArray(v))
-                Object.assign(parsedInputs, v);
-            else
-                throw new Error('inputs must be a JSON object');
-        }
-        catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            throw new Error(`Invalid 'inputs' JSON: ${msg}`);
-        }
-    }
+    const baseUrl = baseUrlInput ||
+        target.baseUrl ||
+        envBaseUrl ||
+        (() => {
+            throw new Error(`Missing base URL. Provide input 'base_url', use a URL in 'repo', or ensure env GITEA_SERVER_URL/GITHUB_SERVER_URL is set.`);
+        })();
+    const platform = detectPlatform(baseUrl, target.baseUrl ? new URL(baseUrl).host : undefined);
+    const apiBaseUrl = computeApiBase(platform, baseUrl);
+    const token = tokenInput ||
+        envToken ||
+        (() => {
+            throw new Error(`Missing token. Provide input 'token' or ensure env GITEA_TOKEN/GITHUB_TOKEN is set.`);
+        })();
+    const parsedInputs = parseInputs(inputsRaw);
     return {
-        baseUrl: normalizeBaseUrl(baseUrl),
+        platform,
+        baseUrl: normalizeOrigin(baseUrl),
+        apiBaseUrl,
         owner: target.owner,
         repo: target.repo,
         workflowName,
-        ref: ref || envRef || 'main',
+        ref: refInput || envRef || 'main',
         token,
         inputs: parsedInputs,
         verbose,
     };
 }
+exports.__internal = {
+    detectPlatform,
+    computeApiBase,
+    normalizeOrigin,
+};
 //# sourceMappingURL=config.js.map

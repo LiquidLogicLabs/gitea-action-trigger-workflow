@@ -1,0 +1,43 @@
+name: E2E Tests
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run E2E tests
+        env:
+          TEST_GITHUB_TOKEN: ${{ secrets.TEST_GITHUB_TOKEN }}
+          TEST_GITHUB_REPO: ${{ vars.TEST_GITHUB_REPO }}
+          TEST_GITHUB_SERVER_URL: ${{ vars.TEST_GITHUB_SERVER_URL || 'https://github.com' }}
+          TEST_GITHUB_API_URL: ${{ vars.TEST_GITHUB_API_URL || 'https://api.github.com' }}
+          TEST_GITHUB_WORKFLOW: ${{ vars.TEST_GITHUB_WORKFLOW }}
+          TEST_GITHUB_REF: ${{ vars.TEST_GITHUB_REF || 'main' }}
+          TEST_GITEA_TOKEN: ${{ secrets.TEST_GITEA_TOKEN }}
+          TEST_GITEA_REPO: ${{ vars.TEST_GITEA_REPO }}
+          TEST_GITEA_URL: ${{ vars.TEST_GITEA_URL }}
+          TEST_GITEA_WORKFLOW: ${{ vars.TEST_GITEA_WORKFLOW }}
+          TEST_GITEA_REF: ${{ vars.TEST_GITEA_REF || 'main' }}
+        run: npm run test:e2e
+

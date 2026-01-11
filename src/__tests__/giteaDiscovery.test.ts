@@ -1,5 +1,5 @@
-import { dispatchWorkflow, findWorkflowByName, listWorkflows, WorkflowLike } from '../gitea';
-import type { HttpClient } from '../http';
+import { createGiteaClient } from '../platforms/gitea';
+import type { HttpClient } from '../http/client';
 import { Logger } from '../logger';
 
 function fakeHttp(responses: Record<string, { status: number; data?: unknown; text?: string }>): HttpClient {
@@ -13,7 +13,7 @@ function fakeHttp(responses: Record<string, { status: number; data?: unknown; te
 
 const logger = new Logger(false);
 
-describe('gitea workflow discovery/dispatch', () => {
+describe('gitea platform client', () => {
   test('listWorkflows tries candidates until one works', async () => {
     const http = fakeHttp({
       'GET /api/v1/repos/o/r/actions/workflows': { status: 404 },
@@ -23,14 +23,20 @@ describe('gitea workflow discovery/dispatch', () => {
       },
     });
 
-    const { workflows } = await listWorkflows({ http, logger, owner: 'o', repo: 'r', verbose: true });
+    const client = createGiteaClient({
+      baseUrl: 'https://gitea.example.com',
+      apiBaseUrl: 'https://gitea.example.com',
+      http,
+      logger,
+      owner: 'o',
+      repo: 'r',
+      token: 'x',
+      verbose: true,
+    });
+
+    const { workflows } = await client.listWorkflows();
     expect(workflows).toHaveLength(1);
     expect(workflows[0]!.name).toBe('Build');
-  });
-
-  test('findWorkflowByName matches exact name', () => {
-    const workflows: WorkflowLike[] = [{ id: 1, name: 'Deploy' }, { id: 2, name: 'Build' }];
-    expect(findWorkflowByName(workflows, 'Build')).toEqual({ id: 2, name: 'Build' });
   });
 
   test('dispatchWorkflow prefers id-based dispatch routes', async () => {
@@ -38,20 +44,21 @@ describe('gitea workflow discovery/dispatch', () => {
       'POST /api/v1/repos/o/r/actions/workflows/2/dispatches': { status: 204 },
     });
 
-    const res = await dispatchWorkflow({
+    const client = createGiteaClient({
+      baseUrl: 'https://gitea.example.com',
+      apiBaseUrl: 'https://gitea.example.com',
       http,
       logger,
       owner: 'o',
       repo: 'r',
-      workflow: { id: 2, name: 'Build' },
-      ref: 'main',
-      inputs: { env: 'prod' },
+      token: 'x',
       verbose: true,
     });
+
+    const res = await client.dispatchWorkflow({ id: 2, name: 'Build' }, 'main', { env: 'prod' });
 
     expect(res.status).toBe(204);
     expect(res.endpoint).toContain('/workflows/2/dispatches');
   });
 });
-
 
